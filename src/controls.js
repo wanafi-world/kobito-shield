@@ -31,14 +31,15 @@ export class Controls {
     const s = this.scene;
     const style = { fontFamily: '"Hiragino Sans","Noto Sans JP",sans-serif', fontSize: '20px', color: '#ffffff', fontStyle: 'bold' };
     const d = this.dpad;
-    const base = s.add.circle(d.x, d.y, d.r, 0x000000, 0.18).setScrollFactor(0).setDepth(100);
-    base.setStrokeStyle(3, 0xffffff, 0.35);
-    this.arrows = {};
-    [['left', -70, 0, '◀'], ['right', 70, 0, '▶'], ['up', 0, -70, '▲'], ['down', 0, 70, '▼']].forEach(([n, dx, dy, t]) => {
-      const c = s.add.circle(d.x + dx, d.y + dy, 34, 0xffffff, 0.25).setScrollFactor(0).setDepth(101);
-      s.add.text(d.x + dx, d.y + dy, t, style).setOrigin(0.5).setScrollFactor(0).setDepth(102);
-      this.arrows[n] = c;
-    });
+    // 移動スティック: 画面の左半分のどこを触っても、触った場所が中心になる
+    this.stick = null;
+    this.stickBase = s.add.circle(d.x, d.y, 70, 0x000000, 0.18).setScrollFactor(0).setDepth(100);
+    this.stickBase.setStrokeStyle(3, 0xffffff, 0.4);
+    this.stickKnob = s.add.circle(d.x, d.y, 30, 0xffffff, 0.4).setScrollFactor(0).setDepth(101);
+    this.stickHint = s.add.text(d.x, d.y + 95, '左半分のどこでも\n触って動かす', {
+      ...style, fontSize: '14px', align: 'center',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(101).setAlpha(0.7);
+    this.setStickIdle();
     const btn = (name, x, y, r, label, color) => {
       const c = s.add.circle(x, y, r, color, 0.45).setScrollFactor(0).setDepth(101);
       c.setStrokeStyle(3, 0xffffff, 0.6);
@@ -58,23 +59,42 @@ export class Controls {
     });
 
     if (this.isTouch) {
-      const d = this.dpad;
-      for (const p of this.scene.input.manager.pointers) {
-        if (!p.isDown) continue;
-        const dx = p.x - d.x, dy = p.y - d.y;
-        if (Math.hypot(dx, dy) < d.r * 1.3) {
-          if (dx < -22) now.left = true;
-          if (dx > 22) now.right = true;
-          if (dy < -38) now.up = true;
-          if (dy > 38) now.down = true;
-          continue;
-        }
+      const pointers = this.scene.input.manager.pointers.filter(p => p.isDown);
+      const used = new Set();
+      for (const p of pointers) {
         for (const b of this.buttons) {
-          if (Math.hypot(p.x - b.x, p.y - b.y) < b.r * 1.2) now[b.name] = true;
+          if (Math.hypot(p.x - b.x, p.y - b.y) < b.r * 1.2) { now[b.name] = true; used.add(p); }
         }
       }
+      // スティックの指が離れたら消す
+      if (this.stick && !pointers.some(p => p.id === this.stick.id)) {
+        this.stick = null;
+        this.setStickIdle();
+      }
+      // 左半分に新しく触れた指をスティックにする
+      if (!this.stick) {
+        const p = pointers.find(p => !used.has(p) && p.downX < 480);
+        if (p) this.stick = { id: p.id, ox: p.downX, oy: p.downY };
+      }
+      if (this.stick) {
+        const p = pointers.find(p => p.id === this.stick.id);
+        const st = this.stick, R = 70;
+        let dx = p.x - st.ox, dy = p.y - st.oy;
+        const dist = Math.hypot(dx, dy);
+        if (dist > R) {
+          // 指が外に出たら、中心も指についていく
+          st.ox = p.x - dx / dist * R; st.oy = p.y - dy / dist * R;
+          dx = p.x - st.ox; dy = p.y - st.oy;
+        }
+        if (dx < -18) now.left = true;
+        if (dx > 18) now.right = true;
+        if (dy < -32) now.up = true;
+        if (dy > 32) now.down = true;
+        this.stickBase.setPosition(st.ox, st.oy).setAlpha(1);
+        this.stickKnob.setPosition(st.ox + dx, st.oy + dy).setAlpha(1);
+        this.stickHint.setVisible(false);
+      }
       for (const b of this.buttons) b.c.setFillStyle(b.c.fillColor, now[b.name] ? 0.85 : 0.45);
-      for (const n in this.arrows) this.arrows[n].setFillStyle(0xffffff, now[n] ? 0.7 : 0.25);
     }
 
     NAMES.forEach(n => {
@@ -82,6 +102,13 @@ export class Controls {
       this.released[n] = !now[n] && this.held[n];
       this.held[n] = now[n];
     });
+  }
+
+  setStickIdle() {
+    const d = this.dpad;
+    this.stickBase.setPosition(d.x, d.y).setAlpha(0.5);
+    this.stickKnob.setPosition(d.x, d.y).setAlpha(0.5);
+    this.stickHint.setVisible(true);
   }
 
   anyPressed() {
